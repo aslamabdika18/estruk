@@ -6,28 +6,25 @@ use App\Http\Controllers\Controller;
 use App\Services\StrukIndexService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class StrukController extends Controller
 {
+    /* ========= SEARCH ========= */
+
     public function byNomor(Request $request): JsonResponse
     {
         $data = $request->validate([
             'tahun' => 'required|digits:4',
-            'kassa' => 'required|numeric',
-            'nomor' => 'required|numeric',
+            'kassa' => 'required|string',
+            'nomor' => 'required|string',
         ]);
 
         $service = new StrukIndexService($data['tahun']);
-
-        $result = $service->findByNomor(
-            $data['kassa'],
-            $data['nomor']
-        );
+        $result = $service->findByNomor($data['kassa'], $data['nomor']);
 
         if (!$result) {
-            return response()->json([
-                'message' => 'Struk tidak ditemukan',
-            ], 404);
+            return response()->json(['message' => 'Struk tidak ditemukan'], 404);
         }
 
         return response()->json([$result]);
@@ -37,18 +34,14 @@ class StrukController extends Controller
     {
         $data = $request->validate([
             'tanggal' => 'required|digits:8',
-            'kassa'   => 'required|numeric',
+            'kassa'   => 'required|string',
         ]);
 
         $tahun = substr($data['tanggal'], -4);
-
         $service = new StrukIndexService($tahun);
 
         return response()->json(
-            $service->findByTanggalDanKassa(
-                $data['tanggal'],
-                $data['kassa']
-            )
+            $service->findByTanggalDanKassa($data['tanggal'], $data['kassa'])
         );
     }
 
@@ -57,7 +50,7 @@ class StrukController extends Controller
         $data = $request->validate([
             'keyword' => 'required|string|min:2',
             'tanggal' => 'nullable|digits:8',
-            'kassa'   => 'nullable|numeric',
+            'kassa'   => 'nullable|string',
         ]);
 
         $tahun = $data['tanggal']
@@ -73,5 +66,34 @@ class StrukController extends Controller
                 $data['kassa'] ?? null
             )
         );
+    }
+
+    /* ========= PREVIEW STREAM (BARU, CEPAT) ========= */
+
+    public function contentStream(Request $request): StreamedResponse
+    {
+        $data = $request->validate([
+            'tahun' => 'required|digits:4',
+            'key'   => 'required|string',
+        ]);
+
+        $service = new StrukIndexService($data['tahun']);
+        $path = $service->getStreamPath($data['key']);
+
+        if (!$path) {
+            abort(404);
+        }
+
+        return response()->stream(function () use ($path) {
+            $handle = fopen($path, 'rb');
+            while (!feof($handle)) {
+                echo fread($handle, 8192);
+                flush();
+            }
+            fclose($handle);
+        }, 200, [
+            'Content-Type' => 'text/plain; charset=UTF-8',
+            'Cache-Control' => 'no-store',
+        ]);
     }
 }

@@ -2,19 +2,40 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { cariByNomor } from '../services/struk.service'
 import type { StrukItem } from '../types/struk'
+import BackButton from '@/components/BackButton.vue'
 
 const tahunList = ref<string[]>([])
 const tahun = ref('')
-const kassa = ref('')
-const nomor = ref('')
+
+// ⬇️ STRING, BUKAN NUMBER
+const kassaInput = ref('')
+const nomorInput = ref('')
 
 const hasil = ref<StrukItem[]>([])
 const error = ref('')
 const loading = ref(false)
 
-const tahunShort = computed(() =>
-  tahun.value ? tahun.value.slice(-2) : '',
-)
+/* ======================
+   FORMATTER
+====================== */
+
+// 01 – 80
+const kassa = computed(() => {
+  if (!kassaInput.value) return ''
+  return kassaInput.value.padStart(2, '0')
+})
+
+// 000001 dst
+const nomor = computed(() => {
+  if (!nomorInput.value) return ''
+  return nomorInput.value.padStart(6, '0')
+})
+
+// 25
+const tahunShort = computed(() => {
+  if (!tahun.value) return ''
+  return tahun.value.slice(-2)
+})
 
 onMounted(loadTahun)
 
@@ -23,6 +44,9 @@ watch(tahun, () => {
   error.value = ''
 })
 
+/* ======================
+   LOAD TAHUN
+====================== */
 async function loadTahun(): Promise<void> {
   try {
     const res = await fetch('/api/struk/tahun')
@@ -34,16 +58,32 @@ async function loadTahun(): Promise<void> {
   }
 }
 
+/* ======================
+   CARI STRUK
+====================== */
 async function cari(): Promise<void> {
   error.value = ''
   hasil.value = []
   loading.value = true
 
+  // VALIDASI FRONTEND
+  if (!/^\d{1,2}$/.test(kassaInput.value)) {
+    error.value = 'Kassa harus 1–2 digit angka'
+    loading.value = false
+    return
+  }
+
+  if (!/^\d{1,6}$/.test(nomorInput.value)) {
+    error.value = 'Nomor struk maksimal 6 digit angka'
+    loading.value = false
+    return
+  }
+
   try {
     hasil.value = await cariByNomor({
       tahun: tahun.value,
-      kassa: kassa.value,
-      nomor: nomor.value,
+      kassa: kassa.value,   // 01
+      nomor: nomor.value,   // 000006
     })
   } catch (e) {
     error.value = (e as Error).message
@@ -52,35 +92,80 @@ async function cari(): Promise<void> {
   }
 }
 
+/* ======================
+   OPEN STRUK
+====================== */
 function openStruk(row: StrukItem): void {
-  const url = `/struk/preview/${row.tahun}/${row.kassa}.${row.nomor}`
-  window.open(url, '_blank', 'width=900,height=600')
+  const key = `${row.kassa}.${row.nomor}`
+  window.open(
+    `/preview/${row.tahun}/${key}`,
+    '_blank',
+    'width=900,height=600',
+  )
 }
 </script>
 
 <template>
   <div class="w-full max-w-md bg-white rounded-lg shadow p-6">
+    <BackButton />
+
     <h1 class="text-xl font-bold text-center mb-4">
       Cari E-Struk (Nomor)
     </h1>
 
     <form @submit.prevent="cari" class="space-y-4">
+      <!-- Tahun -->
       <select v-model="tahun" class="w-full border rounded px-2 py-1">
-        <option v-for="t in tahunList" :key="t" :value="t">{{ t }}</option>
+        <option v-for="t in tahunList" :key="t" :value="t">
+          {{ t }}
+        </option>
       </select>
 
-      <div class="flex gap-2">
-        <span>2031.SA.{{ tahunShort }}.</span>
-        <input v-model="kassa" type="number" class="w-20 border px-2 py-1" required />
-        <input v-model="nomor" type="number" class="flex-1 border px-2 py-1" required />
+      <!-- Nomor Struk -->
+      <div class="flex gap-2 items-center">
+        <span class="whitespace-nowrap">
+          2031.SA.{{ tahunShort }}.
+        </span>
+
+        <!-- KASSA -->
+        <input
+          v-model="kassaInput"
+          type="text"
+          inputmode="numeric"
+          maxlength="2"
+          placeholder="01"
+          class="w-20 border px-2 py-1 text-center"
+          required
+        />
+
+        <!-- NOMOR -->
+        <input
+          v-model="nomorInput"
+          type="text"
+          inputmode="numeric"
+          maxlength="6"
+          placeholder="000001"
+          class="flex-1 border px-2 py-1"
+          required
+        />
       </div>
 
-      <button :disabled="loading" class="w-full bg-blue-600 text-white py-2 rounded">
+      <!-- Preview format -->
+      <p v-if="kassa && nomor" class="text-xs text-gray-500">
+        Format: 2031.SA.{{ tahunShort }}.{{ kassa }}.{{ nomor }}
+      </p>
+
+      <button
+        :disabled="loading"
+        class="w-full bg-blue-600 text-white py-2 rounded"
+      >
         {{ loading ? 'Mencari...' : 'Cari' }}
       </button>
     </form>
 
-    <p v-if="error" class="mt-4 text-red-600 text-sm">{{ error }}</p>
+    <p v-if="error" class="mt-4 text-red-600 text-sm">
+      {{ error }}
+    </p>
 
     <div v-if="hasil.length" class="mt-4 space-y-2 text-sm">
       <button
@@ -89,7 +174,8 @@ function openStruk(row: StrukItem): void {
         @click="openStruk(row)"
         class="w-full text-left border rounded p-2 hover:bg-blue-50"
       >
-        {{ i + 1 }}. {{ row.label }} ({{ row.datetime }})
+        {{ i + 1 }}.
+        {{ row.label }} ({{ row.datetime }})
       </button>
     </div>
   </div>

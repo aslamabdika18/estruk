@@ -13,17 +13,18 @@ async function post<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   })
 
-  const data: unknown = await res.json()
+  let data: unknown = null
+  try {
+    data = await res.json()
+  } catch {}
 
   if (!res.ok) {
-    const err = data as ApiErrorResponse
-    throw new Error(err.message || 'Request gagal')
+    const err = data as ApiErrorResponse | null
+    throw new Error(err?.message ?? 'Request gagal')
   }
 
   return data as T
 }
-
-/* ========= Public API ========= */
 
 export function cariByNomor(
   payload: CariNomorPayload,
@@ -41,4 +42,28 @@ export function cariByKeyword(
   payload: CariKeywordPayload,
 ): Promise<StrukItem[]> {
   return post('/api/struk/by-keyword', payload)
+}
+
+export function getStrukContent(payload: {
+  tahun: string
+  key: string
+}): Promise<{ content: string }> {
+  return post('/api/struk/content', payload)
+}
+
+export async function getStrukStream(payload: {
+  tahun: string
+  key: string
+}): Promise<string> {
+  const res = await fetch('/api/struk/content-stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  if (!res.ok) {
+    throw new Error('Gagal memuat struk')
+  }
+
+  return await res.text()
 }

@@ -7,8 +7,6 @@ export interface StrukItem {
   datetime: string
 }
 
-/* ========= Payload ========= */
-
 export interface CariNomorPayload {
   tahun: string
   kassa: string

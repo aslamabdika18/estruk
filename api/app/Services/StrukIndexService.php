@@ -3,44 +3,39 @@
 namespace App\Services;
 
 use Carbon\Carbon;
+use DirectoryIterator;
+use RuntimeException;
 
 class StrukIndexService
 {
-    protected string $basePath = '';
+    protected string $basePath;
     protected string $indexFile;
-    protected int $ttl = 3600; // 1 jam
+    protected int $ttl = 3600;
 
     public function __construct(protected string $year)
     {
-        $base = rtrim(config('struk.base_path'), '/\\');
+        $base = rtrim((string) config('struk.base_path'), '/\\');
 
-        if (!is_dir($base)) {
-            return;
+        if ($base === '' || !is_dir($base)) {
+            throw new RuntimeException("STRUK_BASE_PATH tidak ditemukan: {$base}");
         }
 
-        if (is_dir("$base/estruk{$year}")) {
-            $this->basePath = "$base/estruk{$year}";
-        } elseif ((int)$year === (int)date('Y') && is_dir("$base/estruk")) {
-            $this->basePath = "$base/estruk";
+        if (is_dir("{$base}/estruk{$year}")) {
+            $this->basePath = "{$base}/estruk{$year}";
+        } elseif ((int)$year === (int)date('Y') && is_dir("{$base}/estruk")) {
+            $this->basePath = "{$base}/estruk";
+        } else {
+            throw new RuntimeException("Folder struk tahun {$year} tidak ditemukan");
         }
 
         $this->indexFile = storage_path("app/struk-index-{$year}.json");
     }
 
-    /* =========================
-       INDEX HANDLING
-    ========================= */
+    /* ================= INDEX (SEARCH) ================= */
 
     protected function ensureIndex(): void
     {
-        if (!$this->basePath) {
-            return;
-        }
-
-        if (
-            !is_file($this->indexFile) ||
-            time() - filemtime($this->indexFile) > $this->ttl
-        ) {
+        if (!is_file($this->indexFile) || time() - filemtime($this->indexFile) > $this->ttl) {
             $this->buildIndex();
         }
     }
@@ -49,69 +44,54 @@ class StrukIndexService
     {
         $data = [];
 
-        foreach (glob($this->basePath . '/*.txt') as $file) {
-            $key = basename($file, '.txt'); // 01.000123
+        foreach (new DirectoryIterator($this->basePath) as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'txt') continue;
 
-            if (!preg_match('/^(\d{2})\.(\d+)$/', $key, $m)) {
-                continue;
-            }
+            $key = $file->getBasename('.txt'); // 01.000006
+            if (!preg_match('/^\d{2}\.\d{6}$/', $key)) continue;
+
+            [$kassa, $nomor] = explode('.', $key);
 
             $data[$key] = [
-                'kassa' => $m[1],
-                'nomor' => $m[2],
-                'path' => $file,
-                'mtime' => filemtime($file),
+                'kassa' => $kassa,
+                'nomor' => $nomor,
+                'mtime' => $file->getMTime(),
             ];
         }
 
-        file_put_contents(
-            $this->indexFile,
-            json_encode($data, JSON_UNESCAPED_SLASHES)
-        );
+        file_put_contents($this->indexFile, json_encode($data));
     }
 
     protected function loadIndex(): array
     {
         $this->ensureIndex();
-
-        if (!is_file($this->indexFile)) {
-            return [];
-        }
-
-        return json_decode(file_get_contents($this->indexFile), true) ?? [];
+        return is_file($this->indexFile)
+            ? json_decode(file_get_contents($this->indexFile), true) ?? []
+            : [];
     }
-
-    /* =========================
-       FORMAT OUTPUT (API CONTRACT)
-    ========================= */
 
     protected function format(string $key, array $info): array
     {
-        $time = Carbon::createFromTimestamp($info['mtime']);
-
         return [
             'key'      => $key,
             'tahun'    => $this->year,
             'kassa'    => $info['kassa'],
             'nomor'    => $info['nomor'],
-            'label'    => "2031.SA." . substr($this->year, -2) . ".{$key}",
-            'datetime' => $time->format('d-m-Y H:i'),
-            'path'     => $info['path'],
+            'label'    => '2031.SA.' . substr($this->year, -2) . '.' . $key,
+            'datetime' => Carbon::createFromTimestamp($info['mtime'])->format('d-m-Y H:i'),
         ];
     }
 
-    /* =========================
-       PUBLIC SEARCH METHODS
-    ========================= */
+    /* ================= SEARCH API ================= */
 
     public function findByNomor(string $kassa, string $nomor): ?array
     {
         $index = $this->loadIndex();
-        $key = str_pad($kassa, 2, '0', STR_PAD_LEFT) . '.' . ltrim($nomor, '0');
+        $key = str_pad($kassa, 2, '0', STR_PAD_LEFT)
+             . '.'
+             . str_pad($nomor, 6, '0', STR_PAD_LEFT);
 
-        return isset($index[$key])
-            ? $this->format($key, $index[$key])
-            : null;
+        return isset($index[$key]) ? $this->format($key, $index[$key]) : null;
     }
 
     public function findByTanggalDanKassa(string $tanggal, string $kassa): array
@@ -123,14 +103,10 @@ class StrukIndexService
         $kassa = str_pad($kassa, 2, '0', STR_PAD_LEFT);
 
         foreach ($index as $key => $info) {
-            if ($info['kassa'] !== $kassa) {
-                continue;
-            }
+            if ($info['kassa'] !== $kassa) continue;
 
             $time = Carbon::createFromTimestamp($info['mtime']);
-            if (!$time->isSameDay($targetDay)) {
-                continue;
-            }
+            if (!$time->isSameDay($targetDay)) continue;
 
             $hasil[] = $this->format($key, $info);
         }
@@ -153,26 +129,15 @@ class StrukIndexService
             : null;
 
         foreach ($index as $key => $info) {
-            if ($kassa && $info['kassa'] !== $kassa) {
-                continue;
-            }
+            if ($kassa && $info['kassa'] !== $kassa) continue;
 
             $time = Carbon::createFromTimestamp($info['mtime']);
-            if ($targetDay && !$time->isSameDay($targetDay)) {
-                continue;
-            }
+            if ($targetDay && !$time->isSameDay($targetDay)) continue;
 
-            if (!is_file($info['path'])) {
-                continue;
-            }
+            $path = $this->basePath . DIRECTORY_SEPARATOR . $key . '.txt';
+            if (!is_file($path)) continue;
 
-            // BACA FILE HANYA SETELAH FILTER
-            if (!str_contains(
-                strtoupper(file_get_contents($info['path'])),
-                $keyword
-            )) {
-                continue;
-            }
+            if (!str_contains(strtoupper(file_get_contents($path)), $keyword)) continue;
 
             $hasil[] = $this->format($key, $info);
         }
@@ -180,12 +145,39 @@ class StrukIndexService
         return $hasil;
     }
 
-    public function getContent(string $key): ?string
-    {
-        $index = $this->loadIndex();
+    /* ================= PREVIEW STREAM (TAMBAHAN) ================= */
 
-        return isset($index[$key]) && is_file($index[$key]['path'])
-            ? file_get_contents($index[$key]['path'])
-            : null;
+    public function getStreamPath(string $key): ?string
+    {
+        if (!preg_match('/^\d{2}\.\d{6}$/', $key)) {
+            return null;
+        }
+
+        $path = $this->basePath . DIRECTORY_SEPARATOR . $key . '.txt';
+        return is_file($path) ? $path : null;
+    }
+
+    /* ================= AVAILABLE YEARS ================= */
+
+    public static function availableYears(): array
+    {
+        $base = rtrim((string) config('struk.base_path'), '/\\');
+        if (!is_dir($base)) return [];
+
+        $years = [];
+
+        foreach (scandir($base) as $dir) {
+            if (preg_match('/^estruk(\d{4})$/', $dir, $m)) {
+                $years[] = $m[1];
+            }
+            if ($dir === 'estruk') {
+                $years[] = (string)date('Y');
+            }
+        }
+
+        $years = array_unique($years);
+        rsort($years);
+
+        return array_values($years);
     }
 }
