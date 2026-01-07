@@ -1,5 +1,0 @@
-RewriteEngine On
-
-#Redirect semua request ke folder public
-RewriteCond %{REQUEST_URI} !^/estruk/public/
-RewriteRule ^(.*)$ /estruk/public/$1 [L]

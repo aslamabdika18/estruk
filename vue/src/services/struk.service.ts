@@ -1,63 +1,74 @@
+import { apiFetch } from '@/utils/api'
 import type {
   StrukItem,
   CariNomorPayload,
   CariTanggalPayload,
   CariKeywordPayload,
-  ApiErrorResponse,
-} from '../types/struk'
+} from '@/types/struk'
 
-async function post<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+// =====================
+// POST JSON helper
+// =====================
+function post<T>(url: string, body: unknown): Promise<T> {
+  return apiFetch<T>(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-
-  let data: unknown = null
-  try {
-    data = await res.json()
-  } catch {}
-
-  if (!res.ok) {
-    const err = data as ApiErrorResponse | null
-    throw new Error(err?.message ?? 'Request gagal')
-  }
-
-  return data as T
 }
 
+// =====================
+// SERVICES
+// =====================
 export function cariByNomor(
   payload: CariNomorPayload,
 ): Promise<StrukItem[]> {
-  return post('/api/struk/by-nomor', payload)
+  return post('/struk/by-nomor', payload)
 }
 
 export function cariByTanggal(
   payload: CariTanggalPayload,
 ): Promise<StrukItem[]> {
-  return post('/api/struk/by-tanggal', payload)
+  return post('/struk/by-tanggal', payload)
 }
 
 export function cariByKeyword(
   payload: CariKeywordPayload,
 ): Promise<StrukItem[]> {
-  return post('/api/struk/by-keyword', payload)
+  return post('/struk/by-keyword', payload)
 }
 
 export function getStrukContent(payload: {
   tahun: string
   key: string
 }): Promise<{ content: string }> {
-  return post('/api/struk/content', payload)
+  return post('/struk/content', payload)
 }
 
+// =====================
+// GET TAHUN STRUK
+// =====================
+export function getTahunStruk(): Promise<string[]> {
+  return apiFetch<string[]>('/struk/tahun')
+}
+
+// =====================
+// STREAM (TEXT RESPONSE)
+// =====================
 export async function getStrukStream(payload: {
   tahun: string
   key: string
 }): Promise<string> {
-  const res = await fetch('/api/struk/content-stream', {
+
+  const base =
+    import.meta.env.VITE_API_BASE && import.meta.env.VITE_API_BASE !== ''
+      ? import.meta.env.VITE_API_BASE
+      : '/estruk/api'
+
+  const res = await fetch(`${base}/struk/content-stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify(payload),
   })
 
@@ -67,3 +78,6 @@ export async function getStrukStream(payload: {
 
   return await res.text()
 }
+
+
+

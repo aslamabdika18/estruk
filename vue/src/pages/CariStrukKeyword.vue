@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { cariByKeyword } from '../services/struk.service'
-import type { StrukItem } from '../types/struk'
+import { cariByKeyword } from '@/services/struk.service'
+import type { StrukItem } from '@/types/struk'
 import BackButton from '@/components/BackButton.vue'
 
 const tanggalPicker = ref('')
@@ -44,7 +44,7 @@ async function onSubmit(): Promise<void> {
 function openStruk(row: StrukItem): void {
   const key = `${row.kassa}.${row.nomor}`
   window.open(
-    `/preview/${row.tahun}/${key}`,
+    `/estruk/preview/${row.tahun}/${key}`, // ✅ FIX
     '_blank',
     'width=900,height=600',
   )
@@ -54,6 +54,7 @@ function openStruk(row: StrukItem): void {
 <template>
   <div class="max-w-xl mx-auto bg-white p-6 rounded shadow">
     <BackButton />
+
     <h1 class="text-xl font-bold text-center mb-4">
       Cari E-Struk (Keyword)
     </h1>

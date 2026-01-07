@@ -21,7 +21,7 @@ class StrukController extends Controller
         ]);
 
         $service = new StrukIndexService($data['tahun']);
-        $result = $service->findByNomor($data['kassa'], $data['nomor']);
+        $result  = $service->findByNomor($data['kassa'], $data['nomor']);
 
         if (!$result) {
             return response()->json(['message' => 'Struk tidak ditemukan'], 404);
@@ -68,32 +68,56 @@ class StrukController extends Controller
         );
     }
 
-    /* ========= PREVIEW STREAM (BARU, CEPAT) ========= */
+    /* ================= PREVIEW STREAM ================= */
 
-    public function contentStream(Request $request): StreamedResponse
+public function contentStream(Request $request)
     {
-        $data = $request->validate([
-            'tahun' => 'required|digits:4',
+        $request->validate([
+            'tahun' => 'required|string',
             'key'   => 'required|string',
         ]);
 
-        $service = new StrukIndexService($data['tahun']);
-        $path = $service->getStreamPath($data['key']);
+        $service = new StrukIndexService($request->tahun);
+        $path = $service->getStreamPath($request->key);
 
         if (!$path) {
-            abort(404);
+            return response('File tidak ditemukan', 404);
         }
 
-        return response()->stream(function () use ($path) {
-            $handle = fopen($path, 'rb');
-            while (!feof($handle)) {
-                echo fread($handle, 8192);
-                flush();
+        // KIRIM ISI TXT APA ADANYA
+        return response()->make(
+            file_get_contents($path),
+            200,
+            [
+                'Content-Type' => 'text/plain; charset=UTF-8',
+                'Cache-Control' => 'no-cache',
+            ]
+        );
+    }
+
+
+    /* ========= AVAILABLE YEARS (AMAN) ========= */
+
+    public function tahun(): JsonResponse
+    {
+        $base = rtrim((string) config('struk.base_path'), '/\\');
+        $years = [];
+
+        if (is_dir($base)) {
+            foreach (scandir($base) as $dir) {
+                if (preg_match('/^estruk(\d{4})$/', $dir, $m)) {
+                    $years[] = $m[1];
+                }
+
+                if ($dir === 'estruk') {
+                    $years[] = (string) date('Y');
+                }
             }
-            fclose($handle);
-        }, 200, [
-            'Content-Type' => 'text/plain; charset=UTF-8',
-            'Cache-Control' => 'no-store',
-        ]);
+        }
+
+        $years = array_unique($years);
+        rsort($years);
+
+        return response()->json(array_values($years));
     }
 }

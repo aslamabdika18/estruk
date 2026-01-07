@@ -1,25 +1,19 @@
-import tailwindcss from '@tailwindcss/vite';
+import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import path from 'path' // ⬅️ WAJIB
+import path from 'path'
 
 export default defineConfig({
   plugins: [
     vue(),
-    tailwindcss(), // ✅ Tailwind CSS v4
+    tailwindcss(),
   ],
+
+  base: '/estruk/',
+
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
-    },
-  },
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://estruk.test',
-        changeOrigin: true,
-        secure: false,
-      },
     },
   },
 })

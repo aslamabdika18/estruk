@@ -127,6 +127,13 @@ return [
             'path' => storage_path('logs/laravel.log'),
         ],
 
+        'struk' => [
+    'driver' => 'single',
+    'path' => storage_path('logs/struk-index.log'),
+    'level' => 'info',
+],
+
+
     ],
 
 ];

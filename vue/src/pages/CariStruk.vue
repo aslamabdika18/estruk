@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { cariByNomor } from '../services/struk.service'
 import type { StrukItem } from '../types/struk'
 import BackButton from '@/components/BackButton.vue'
+import { getTahunStruk } from '@/services/struk.service'
 
 const tahunList = ref<string[]>([])
 const tahun = ref('')
@@ -49,8 +50,7 @@ watch(tahun, () => {
 ====================== */
 async function loadTahun(): Promise<void> {
   try {
-    const res = await fetch('/api/struk/tahun')
-    const data = (await res.json()) as string[]
+    const data = await getTahunStruk()
     tahunList.value = data
     tahun.value = data[0] ?? new Date().getFullYear().toString()
   } catch {
@@ -66,7 +66,6 @@ async function cari(): Promise<void> {
   hasil.value = []
   loading.value = true
 
-  // VALIDASI FRONTEND
   if (!/^\d{1,2}$/.test(kassaInput.value)) {
     error.value = 'Kassa harus 1–2 digit angka'
     loading.value = false
@@ -82,8 +81,8 @@ async function cari(): Promise<void> {
   try {
     hasil.value = await cariByNomor({
       tahun: tahun.value,
-      kassa: kassa.value,   // 01
-      nomor: nomor.value,   // 000006
+      kassa: kassa.value,
+      nomor: nomor.value,
     })
   } catch (e) {
     error.value = (e as Error).message
@@ -98,12 +97,13 @@ async function cari(): Promise<void> {
 function openStruk(row: StrukItem): void {
   const key = `${row.kassa}.${row.nomor}`
   window.open(
-    `/preview/${row.tahun}/${key}`,
+    `/estruk/preview/${row.tahun}/${key}`, // ✅ BENAR
     '_blank',
     'width=900,height=600',
   )
 }
 </script>
+
 
 <template>
   <div class="w-full max-w-md bg-white rounded-lg shadow p-6">

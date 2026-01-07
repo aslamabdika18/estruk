@@ -1,0 +1,23 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    RewriteBase /estruk/
+
+    # =============================
+    # 1️⃣ API → LARAVEL PUBLIC
+    # =============================
+    RewriteCond %{REQUEST_URI} ^/estruk/api/
+    RewriteRule ^api/(.*)$ public/index.php [L,QSA]
+
+    # =============================
+    # 2️⃣ FILE / FOLDER REAL
+    # =============================
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # =============================
+    # 3️⃣ SPA FALLBACK → VUE DIST
+    # =============================
+    RewriteRule ^ vue/dist/index.html [L]
+</IfModule>

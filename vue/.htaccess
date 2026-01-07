@@ -1,0 +1,27 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # =====================================
+    # BASE PATH APLIKASI
+    # =====================================
+    RewriteBase /estruk/
+
+    # =====================================
+    # JANGAN GANGGU API LARAVEL
+    # =====================================
+    # Semua request ke /estruk/api/* BIARKAN KE LARAVEL
+    RewriteCond %{REQUEST_URI} ^/estruk/api/
+    RewriteRule ^ - [L]
+
+    # =====================================
+    # JANGAN GANGGU ASSET ASLI
+    # =====================================
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # =====================================
+    # SPA FALLBACK (VUE ROUTER)
+    # =====================================
+    RewriteRule ^ index.html [L]
+</IfModule>

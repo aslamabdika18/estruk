@@ -1,3 +1,69 @@
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+import { cariByTanggal } from '@/services/struk.service'
+import type { StrukItem } from '@/types/struk'
+import BackButton from '@/components/BackButton.vue'
+
+const tanggalPicker = ref('')
+const kassaInput = ref('')
+
+const hasil = ref<StrukItem[]>([])
+const error = ref('')
+const loading = ref(false)
+
+const today = new Date().toISOString().slice(0, 10)
+
+// ddmmyyyy
+const tanggal = computed(() => {
+  if (!tanggalPicker.value) return ''
+  const [y, m, d] = tanggalPicker.value.split('-')
+  return `${d}${m}${y}`
+})
+
+// 01 – 80
+const kassa = computed(() => {
+  if (!kassaInput.value) return ''
+  return kassaInput.value.padStart(2, '0')
+})
+
+watch([tanggalPicker, kassaInput], () => {
+  hasil.value = []
+  error.value = ''
+})
+
+async function onSubmit(): Promise<void> {
+  error.value = ''
+  hasil.value = []
+  loading.value = true
+
+  if (!/^\d{1,2}$/.test(kassaInput.value)) {
+    error.value = 'Kassa harus 1–2 digit angka'
+    loading.value = false
+    return
+  }
+
+  try {
+    hasil.value = await cariByTanggal({
+      tanggal: tanggal.value,
+      kassa: kassa.value,
+    })
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    loading.value = false
+  }
+}
+
+function openStruk(row: StrukItem): void {
+  const key = `${row.kassa}.${row.nomor}`
+  window.open(
+    `/estruk/preview/${row.tahun}/${key}`, // ✅ FIX
+    '_blank',
+    'width=900,height=600',
+  )
+}
+</script>
+
 <template>
   <div class="w-full max-w-md bg-white p-6 rounded shadow">
     <BackButton />
@@ -7,7 +73,6 @@
     </h1>
 
     <form @submit.prevent="onSubmit" class="space-y-3">
-      <!-- TANGGAL -->
       <input
         type="date"
         v-model="tanggalPicker"
@@ -16,7 +81,6 @@
         required
       />
 
-      <!-- KASSA -->
       <input
         v-model="kassaInput"
         type="text"
@@ -51,69 +115,3 @@
     </div>
   </div>
 </template>
-<script setup lang="ts">
-import { ref, computed, watch } from 'vue'
-import { cariByTanggal } from '../services/struk.service'
-import type { StrukItem } from '../types/struk'
-import BackButton from '@/components/BackButton.vue'
-
-const tanggalPicker = ref('')
-const kassaInput = ref('') // ⬅️ STRING
-
-const hasil = ref<StrukItem[]>([])
-const error = ref('')
-const loading = ref(false)
-
-const today = new Date().toISOString().slice(0, 10)
-
-// ddmmyyyy
-const tanggal = computed(() => {
-  if (!tanggalPicker.value) return ''
-  const [y, m, d] = tanggalPicker.value.split('-')
-  return `${d}${m}${y}`
-})
-
-// 01 – 80
-const kassa = computed(() => {
-  if (!kassaInput.value) return ''
-  return kassaInput.value.padStart(2, '0')
-})
-
-watch([tanggalPicker, kassaInput], () => {
-  hasil.value = []
-  error.value = ''
-})
-
-async function onSubmit(): Promise<void> {
-  error.value = ''
-  hasil.value = []
-  loading.value = true
-
-  // VALIDASI FRONTEND
-  if (!/^\d{1,2}$/.test(kassaInput.value)) {
-    error.value = 'Kassa harus 1–2 digit angka'
-    loading.value = false
-    return
-  }
-
-  try {
-    hasil.value = await cariByTanggal({
-      tanggal: tanggal.value,
-      kassa: kassa.value, // ⬅️ 01
-    })
-  } catch (e) {
-    error.value = (e as Error).message
-  } finally {
-    loading.value = false
-  }
-}
-
-function openStruk(row: StrukItem): void {
-  const key = `${row.kassa}.${row.nomor}`
-  window.open(
-    `/preview/${row.tahun}/${key}`,
-    '_blank',
-    'width=900,height=600',
-  )
-}
-</script>

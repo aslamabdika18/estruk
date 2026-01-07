@@ -15,7 +15,5 @@ Route::prefix('struk')->group(function () {
     Route::post('/content-stream', [StrukController::class, 'contentStream']);
 
     // TAHUN
-    Route::get('/tahun', fn () =>
-        response()->json(StrukIndexService::availableYears())
-    );
+    Route::get('/tahun',   [StrukController::class, 'tahun']);
 });
