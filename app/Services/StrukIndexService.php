@@ -2,18 +2,17 @@
 
 namespace App\Services;
 
-use Carbon\Carbon;
-use DirectoryIterator;
 use RuntimeException;
+use DirectoryIterator;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\DB; // ✅ TETAP DIPAKAI
 
 class StrukIndexService
 {
     protected string $basePath;
     protected string $indexFile;
     protected string $metaFile;
-    protected string $statusFile; // ✅ TETAP ADA (tidak dihapus)
+    protected string $statusFile;
 
     public function __construct(protected string $year)
     {
@@ -23,13 +22,6 @@ class StrukIndexService
             throw new RuntimeException("STRUK_BASE_PATH tidak ditemukan: {$base}");
         }
 
-        /**
-         * =====================================================
-         * PENENTUAN FOLDER STRUK
-         * - estruk        → tahun berjalan
-         * - estruk2024    → arsip
-         * =====================================================
-         */
         if ((int)$year === (int)date('Y') && is_dir("{$base}/estruk")) {
             $this->basePath = "{$base}/estruk";
         } elseif (is_dir("{$base}/estruk{$year}")) {
@@ -39,296 +31,291 @@ class StrukIndexService
         }
 
         $dir = storage_path('app/struk');
-        if (!is_dir($dir)) {
-            mkdir($dir, 0777, true);
-        }
+        if (!is_dir($dir)) mkdir($dir, 0777, true);
 
         $this->indexFile  = "{$dir}/{$year}.index.json";
         $this->metaFile   = "{$dir}/{$year}.meta.json";
         $this->statusFile = "{$dir}/{$year}.status.json";
-
-        /**
-         * ❌ DULU: triggerIncrementalIndex() DIPANGGIL DI SINI
-         * ❗ BUG:
-         * - Constructor harus READ-ONLY
-         * - Search bisa memicu indexing tanpa sengaja
-         *
-         * ✅ SEKARANG:
-         * - Indexing dipanggil EXPLICIT (lihat Bootstrap)
-         */
     }
 
-    /* =====================================================
-     | INDEX LOAD (READ ONLY)
-     ===================================================== */
-    protected function loadIndex(): array
-    {
-        return is_file($this->indexFile)
-            ? json_decode(file_get_contents($this->indexFile), true) ?? []
-            : [];
-    }
-
-    /* =====================================================
-     | INDEX TRIGGER (MAX 1 JAM)
-     | KHUSUS TAHUN BERJALAN
-     ===================================================== */
-    public function triggerIncrementalIndex(): void
+    /* ==============================
+     | ENTRY POINT
+     ============================== */
+    public function run(): void
     {
         $meta = is_file($this->metaFile)
             ? json_decode(file_get_contents($this->metaFile), true)
             : ['last_run' => 0, 'last_mtime' => 0];
 
-        // ⏱️ Batasi 1 jam (INI KUNCI UTAMA)
-        if (time() - ($meta['last_run'] ?? 0) < 3600) {
-            return;
+        if ((int)$this->year === (int)date('Y')) {
+            if (time() - ($meta['last_run'] ?? 0) < 3600) {
+                return;
+            }
         }
 
         $this->buildIncrementalIndex($meta);
     }
 
-    /* =====================================================
-     | BUILD INDEX
-     | - TIDAK RESET
-     | - HANYA FILE TXT BARU
-     ===================================================== */
-    protected function buildIncrementalIndex(array $meta = []): void
-{
-    set_time_limit(0);
-    ini_set('memory_limit', '-1');
+    /* ==============================
+     | CORE INDEX
+     ============================== */
+    protected function buildIncrementalIndex(array $meta): void
+    {
+        set_time_limit(0);
+        ini_set('memory_limit', '-1');
 
-    $this->log('Index scan start');
+        $this->enableSqliteFastMode();
 
-    $index = is_file($this->indexFile)
-        ? json_decode(file_get_contents($this->indexFile), true)
-        : [];
+        $this->writeStatus([
+            'state' => 'running',
+            'year' => $this->year,
+            'processed' => 0,
+            'inserted' => 0,
+            'started_at' => time(),
+        ]);
 
-    $lastMtime = (int) ($meta['last_mtime'] ?? 0);
-    $maxMtime  = $lastMtime;
+        $index = is_file($this->indexFile)
+            ? json_decode(file_get_contents($this->indexFile), true)
+            : [];
 
-    $processed = 0;
-    $inserted  = 0;
-    $startTime = microtime(true);
+        $lastMtime = (int)($meta['last_mtime'] ?? 0);
+        $maxMtime  = $lastMtime;
 
-    foreach (new \DirectoryIterator($this->basePath) as $file) {
-        if (!$file->isFile() || $file->getExtension() !== 'txt') {
-            continue;
+        $batch = [];
+        $batchSize = 1000;
+        $processed = 0;
+        $inserted  = 0;
+        $start = microtime(true);
+
+        foreach (new DirectoryIterator($this->basePath) as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'txt') continue;
+
+            $processed++;
+            $mtime = $file->getMTime();
+            if ($mtime <= $lastMtime) continue;
+
+            $key = $file->getBasename('.txt');
+            if (!preg_match('/^\d{2}\.\d{6}$/', $key)) continue;
+
+            [$kassa, $nomor] = explode('.', $key);
+
+            $index[$key] = compact('kassa', 'nomor', 'mtime');
+
+            $batch[] = [
+                'tahun' => $this->year,
+                'key'   => $key,
+                'kassa' => $kassa,
+                'nomor' => $nomor,
+                'mtime' => $mtime,
+                'path'  => "{$this->basePath}/{$key}.txt",
+            ];
+
+            $inserted++;
+            $maxMtime = max($maxMtime, $mtime);
+
+            if (count($batch) >= $batchSize) {
+                $this->insertBatch($batch);
+                $batch = [];
+            }
+
+            if ($processed % 500 === 0) {
+                $this->writeStatus([
+                    'state' => 'running',
+                    'year' => $this->year,
+                    'processed' => $processed,
+                    'inserted' => $inserted,
+                    'elapsed_s' => round(microtime(true) - $start, 2),
+                ]);
+            }
         }
 
-        $processed++;
+        if ($batch) $this->insertBatch($batch);
 
-        // 🔥 LOG PROGRESS SETIAP 500 FILE
-        if ($processed % 500 === 0) {
-            $this->log('Index progress', [
-                'year'      => $this->year,
-                'processed' => $processed,
-                'inserted'  => $inserted,
-                'elapsed_s' => round(microtime(true) - $startTime, 2),
-            ]);
-        }
-
-        $mtime = $file->getMTime();
-        if ($mtime <= $lastMtime) {
-            continue;
-        }
-
-        $key = $file->getBasename('.txt');
-        if (!preg_match('/^\d{2}\.\d{6}$/', $key)) {
-            continue;
-        }
-
-        [$kassa, $nomor] = explode('.', $key);
-
-        // =========================
-        // JSON INDEX
-        // =========================
-        $index[$key] = [
-            'kassa' => $kassa,
-            'nomor' => $nomor,
-            'mtime' => $mtime,
-        ];
-
-        // =========================
-        // SQLITE INDEX
-        // =========================
-        DB::connection('struk_sqlite')
-            ->table('struk_index')
-            ->updateOrInsert(
-                [
-                    'tahun' => (string) $this->year,
-                    'key'   => $key,
-                ],
-                [
-                    'kassa' => $kassa,
-                    'nomor' => $nomor,
-                    'mtime' => $mtime,
-                    'path'  => "{$this->basePath}/{$key}.txt",
-                ]
-            );
-
-        $inserted++;
-        $maxMtime = max($maxMtime, $mtime);
-    }
-
-    // =========================
-    // SIMPAN META & INDEX
-    // =========================
-    file_put_contents(
-        $this->indexFile,
-        json_encode($index, JSON_THROW_ON_ERROR)
-    );
-
-    file_put_contents(
-        $this->metaFile,
-        json_encode([
+        file_put_contents($this->indexFile, json_encode($index));
+        file_put_contents($this->metaFile, json_encode([
+            'last_run' => time(),
             'last_mtime' => $maxMtime,
-            'last_run'   => time(),
-        ])
-    );
+        ]));
 
-    $this->log('Index update selesai', [
-        'year'      => $this->year,
-        'processed' => $processed,
-        'inserted'  => $inserted,
-        'duration'  => round(microtime(true) - $startTime, 2) . 's',
-        'last_mtime'=> $maxMtime,
-    ]);
-}
+        $this->writeStatus([
+            'state' => 'done',
+            'year' => $this->year,
+            'processed' => $processed,
+            'inserted' => $inserted,
+            'elapsed_s' => round(microtime(true) - $start, 2),
+        ]);
 
+        Log::info("Index struk selesai", [
+            'year' => $this->year,
+            'processed' => $processed,
+            'inserted' => $inserted,
+        ]);
+    }
 
-    /* =====================================================
-     | PAKSA BUILD ARSIP (SEKALI SAJA)
-     ===================================================== */
+    /* ==============================
+     | SQLITE
+     ============================== */
+    protected function enableSqliteFastMode(): void
+    {
+        DB::statement('PRAGMA synchronous = OFF');
+        DB::statement('PRAGMA journal_mode = MEMORY');
+        DB::statement('PRAGMA temp_store = MEMORY');
+    }
+
+    protected function insertBatch(array $rows): void
+    {
+        DB::transaction(fn () =>
+            DB::table('struk_index')->upsert(
+                $rows,
+                ['tahun', 'key'],
+                ['kassa', 'nomor', 'mtime', 'path']
+            )
+        );
+    }
+
+    /* ==============================
+     | STATUS
+     ============================== */
+    protected function writeStatus(array $data): void
+    {
+        $data['updated_at'] = time();
+        file_put_contents($this->statusFile, json_encode($data, JSON_PRETTY_PRINT));
+    }
+
+    /* ==============================
+     | ARSIP
+     ============================== */
     public function forceBuildArchive(): void
-{
-    // Arsip = folder estrukYYYY, constructor sudah validasi
-    if (!is_dir($this->basePath)) {
-        throw new \RuntimeException("Folder arsip tidak valid: {$this->basePath}");
+    {
+        $this->buildIncrementalIndex([
+            'last_run' => 0,
+            'last_mtime' => 0,
+        ]);
     }
 
-    $this->log('Force build archive index');
+    public function findByNomor(string $kassa, string $nomor): ?array
+{
+    $kassa = str_pad(preg_replace('/\D/', '', $kassa), 2, '0', STR_PAD_LEFT);
+    $nomor = str_pad(preg_replace('/\D/', '', $nomor), 6, '0', STR_PAD_LEFT);
 
-    $this->buildIncrementalIndex([
-        'last_mtime' => 0,
-        'last_run'   => 0,
-    ]);
+    $key = "{$kassa}.{$nomor}";
+
+    $row = DB::table('struk_index')
+        ->where('tahun', $this->year)
+        ->where('key', $key)
+        ->first();
+
+    if (!$row || !is_file($row->path)) {
+        return null;
+    }
+
+    return [
+        'key'      => $row->key,
+        'tahun'    => (string)$this->year,
+        'kassa'    => $row->kassa,
+        'nomor'    => $row->nomor,
+        'label'    => substr($this->year, -2) . '.' . $row->key,
+        'datetime' => date('d-m-Y H:i', $row->mtime),
+    ];
 }
 
-    /* =====================================================
-     | SEARCH (TIDAK DIUBAH)
-     ===================================================== */
-    public function findByNomor(string $kassa, string $nomor): ?array
-    {
-        $key = str_pad($kassa, 2, '0', STR_PAD_LEFT)
-             . '.' . str_pad($nomor, 6, '0', STR_PAD_LEFT);
-
-        $row = DB::connection('struk_sqlite')
-            ->table('struk_index')
-            ->where('tahun', $this->year)
-            ->where('key', $key)
-            ->first();
-
-        if (!$row || !is_file($row->path)) return null;
-
-        return [
-            'key'      => $row->key,
-            'tahun'    => (string)$this->year,
-            'kassa'    => $row->kassa,
-            'nomor'    => $row->nomor,
-            'label'    => '2031.SA.' . substr($this->year, -2) . '.' . $row->key,
-            'datetime' => Carbon::createFromTimestamp($row->mtime)->format('d-m-Y H:i'),
-        ];
-    }
-
-    protected function log(string $message, array $context = []): void
-    {
-        Log::channel('struk')->info("[{$this->year}] {$message}", $context);
-    }
-
-    public function findByTanggalDanKassa(string $tanggal, string $kassa): array
+   public function findByTanggalDanKassa(string $tanggal, string $kassa): array
 {
-    /**
-     * $tanggal format: ddmmyyyy
-     * contoh: 12012026
-     */
+    if (!preg_match('/^\d{8}$/', $tanggal)) {
+        return [];
+    }
 
-    $start = Carbon::createFromFormat('dmY', $tanggal)
-        ->startOfDay()
-        ->timestamp;
+    $dt = \DateTime::createFromFormat('dmY', $tanggal);
+    if (!$dt) return [];
 
-    $end = Carbon::createFromFormat('dmY', $tanggal)
-        ->endOfDay()
-        ->timestamp;
+    $start = (clone $dt)->setTime(0, 0)->getTimestamp();
+    $end   = (clone $dt)->setTime(23, 59, 59)->getTimestamp();
 
-    return DB::connection('struk_sqlite')
-        ->table('struk_index')
-        ->where('tahun', $this->year)
-        ->where('kassa', str_pad($kassa, 2, '0', STR_PAD_LEFT))
+    $kassa = str_pad(preg_replace('/\D/', '', $kassa), 2, '0', STR_PAD_LEFT);
+
+    return DB::table('struk_index')
+        ->where('kassa', $kassa)
         ->whereBetween('mtime', [$start, $end])
         ->orderBy('mtime')
+        ->limit(500)
         ->get()
         ->map(fn ($r) => [
             'key'      => $r->key,
-            'tahun'    => (string) $this->year,
+            'tahun'    => (string) $r->tahun,
             'kassa'    => $r->kassa,
             'nomor'    => $r->nomor,
-            'label'    => '2031.SA.' . substr($this->year, -2) . '.' . $r->key,
-            'datetime' => Carbon::createFromTimestamp($r->mtime)->format('d-m-Y H:i'),
+            // 🔥 LABEL LENGKAP
+            'label'    => '2031.SA.' . substr($r->tahun, -2) . '.' . $r->key,
+            'datetime' => date('d-m-Y H:i', $r->mtime),
         ])
         ->toArray();
 }
 
-public function findByKeyword(string $keyword): array
-{
-    /**
-     * Keyword dicocokkan ke:
-     * - key (01.000123)
-     * - kassa
-     * - nomor
-     */
 
-    return DB::connection('struk_sqlite')
-        ->table('struk_index')
-        ->where('tahun', $this->year)
-        ->where(function ($q) use ($keyword) {
-            $q->where('key', 'like', "%{$keyword}%")
-              ->orWhere('kassa', 'like', "%{$keyword}%")
-              ->orWhere('nomor', 'like', "%{$keyword}%");
-        })
-        ->orderByDesc('mtime')
-        ->limit(200) // 🔒 pengaman
-        ->get()
-        ->map(fn ($r) => [
-            'key'      => $r->key,
-            'tahun'    => (string) $this->year,
-            'kassa'    => $r->kassa,
-            'nomor'    => $r->nomor,
-            'label'    => '2031.SA.' . substr($this->year, -2) . '.' . $r->key,
-            'datetime' => Carbon::createFromTimestamp($r->mtime)->format('d-m-Y H:i'),
-        ])
-        ->toArray();
-}
 
-/**
- * Ambil path file TXT untuk preview / stream
- * DIPAKAI OLEH contentStream()
- */
-/**
-     * Ambil path file TXT untuk preview
-     */
-    public function getStreamPath(string $key): ?string
-    {
-        $row = DB::connection('struk_sqlite')
-            ->table('struk_index')
-            ->where('tahun', $this->year)
-            ->where('key', $key)
-            ->first();
+    public function searchByKeyword(
+    string $keyword,
+    ?string $tanggal = null,
+    ?string $kassa = null
+): array {
+    $keyword = strtoupper(trim($keyword));
+    if (strlen($keyword) < 3) return [];
 
-        if (!$row || empty($row->path)) {
-            return null;
-        }
+    $query = DB::table('struk_index')
+        ->select('key','kassa','nomor','mtime')
+        ->where('tahun', $this->year);
 
-        return is_file($row->path) ? $row->path : null;
+    if ($kassa) {
+        $query->where('kassa', str_pad($kassa, 2, '0', STR_PAD_LEFT));
     }
+
+    if ($tanggal) {
+        $dt = \DateTime::createFromFormat('dmY', $tanggal);
+        if ($dt) {
+            $query->whereBetween('mtime', [
+                $dt->setTime(0,0)->getTimestamp(),
+                $dt->setTime(23,59,59)->getTimestamp()
+            ]);
+        }
+    }
+
+    // 🔥 SEARCH ISI STRUK
+    $query->where('content_index', 'like', "%{$keyword}%");
+
+    return $query
+        ->orderByDesc('mtime')
+        ->limit(100)
+        ->get()
+        ->map(fn ($r) => [
+            'key'      => $r->key,
+            'tahun'    => $this->year,
+            'kassa'    => $r->kassa,
+            'nomor'    => $r->nomor,
+            'label'    => substr($this->year,-2).'.'.$r->key,
+            'datetime' => date('d-m-Y H:i', $r->mtime),
+        ])
+        ->toArray();
+}
+
+
+
+    public function getStreamPath(string $key): ?string
+{
+    if (!preg_match('/^\d{2}\.\d{6}$/', $key)) {
+        return null;
+    }
+
+    $row = DB::table('struk_index')
+        ->where('tahun', $this->year)
+        ->where('key', $key)
+        ->first();
+
+    if (!$row || empty($row->path)) {
+        return null;
+    }
+
+    return is_file($row->path) ? $row->path : null;
+}
 
 
 }

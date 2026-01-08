@@ -112,13 +112,6 @@ return [
             // 'encrypt' => env('DB_ENCRYPT', 'yes'),
             // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
         ],
-        
-        'struk_sqlite' => [
-        'driver' => 'sqlite',
-        'database' => storage_path('app/struk/index.sqlite'),
-        'prefix' => '',
-        'foreign_key_constraints' => false,
-    ],
 
     ],
 

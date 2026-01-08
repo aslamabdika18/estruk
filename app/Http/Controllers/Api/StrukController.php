@@ -31,19 +31,30 @@ class StrukController extends Controller
     }
 
     public function byTanggal(Request $request): JsonResponse
-    {
-        $data = $request->validate([
-            'tanggal' => 'required|digits:8',
-            'kassa'   => 'required|string',
-        ]);
+{
+    $data = $request->validate([
+        'tanggal' => 'required|digits:8',
+        'kassa'   => 'required|string',
+    ]);
 
-        $tahun = substr($data['tanggal'], -4);
-        $service = new StrukIndexService($tahun);
+    $service = new StrukIndexService(date('Y'));
 
-        return response()->json(
-            $service->findByTanggalDanKassa($data['tanggal'], $data['kassa'])
-        );
+    $result = $service->findByTanggalDanKassa(
+        $data['tanggal'],
+        $data['kassa']
+    );
+
+    if (empty($result)) {
+        return response()->json([
+            'message' => "Tidak ada struk pada tanggal {$data['tanggal']} untuk kassa {$data['kassa']}"
+        ], 404);
     }
+
+    return response()->json($result);
+}
+
+
+
 
     public function byKeyword(Request $request): JsonResponse
     {
