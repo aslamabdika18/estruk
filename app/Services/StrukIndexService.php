@@ -42,115 +42,162 @@ class StrukIndexService
      | ENTRY POINT
      ============================== */
     public function run(): void
-    {
-        $meta = is_file($this->metaFile)
-            ? json_decode(file_get_contents($this->metaFile), true)
-            : ['last_run' => 0, 'last_mtime' => 0];
+{
+    $meta = is_file($this->metaFile)
+        ? json_decode(file_get_contents($this->metaFile), true)
+        : ['last_run' => 0, 'last_mtime' => 0];
 
-        if ((int)$this->year === (int)date('Y')) {
-            if (time() - ($meta['last_run'] ?? 0) < 3600) {
-                return;
-            }
+    $meta['last_run']   = (int) ($meta['last_run'] ?? 0);
+    $meta['last_mtime'] = (int) ($meta['last_mtime'] ?? 0);
+
+    Log::channel('struk_index')->info('RUN INDEX CALLED', [
+        'year' => $this->year,
+        'last_run' => $meta['last_run']
+            ? date('Y-m-d H:i:s', $meta['last_run'])
+            : null,
+        'last_mtime' => $meta['last_mtime'],
+        'now' => date('Y-m-d H:i:s'),
+    ]);
+
+    // 🔒 Cooldown 1 jam khusus tahun berjalan
+    if ((int)$this->year === (int)date('Y')) {
+        $diff = time() - $meta['last_run'];
+
+        if ($meta['last_run'] > 0 && $diff < 3600) {
+            Log::channel('struk_index')->warning('INDEX SKIPPED (COOLDOWN)', [
+                'year' => $this->year,
+                'diff_sec' => $diff,
+                'remain_sec' => 3600 - $diff,
+            ]);
+            return;
         }
-
-        $this->buildIncrementalIndex($meta);
     }
+
+    Log::channel('struk_index')->info('INDEX STARTING', [
+        'year' => $this->year,
+        'base_path' => $this->basePath,
+    ]);
+
+    $this->buildIncrementalIndex($meta);
+}
+
 
     /* ==============================
      | CORE INDEX
      ============================== */
-    protected function buildIncrementalIndex(array $meta): void
-    {
-        set_time_limit(0);
-        ini_set('memory_limit', '-1');
+   protected function buildIncrementalIndex(array $meta): void
+{
+    set_time_limit(0);
+    ini_set('memory_limit', '-1');
 
-        $this->enableSqliteFastMode();
+    $this->enableSqliteFastMode();
 
-        $this->writeStatus([
-            'state' => 'running',
-            'year' => $this->year,
-            'processed' => 0,
-            'inserted' => 0,
-            'started_at' => time(),
-        ]);
+    $start = microtime(true);
 
-        $index = is_file($this->indexFile)
-            ? json_decode(file_get_contents($this->indexFile), true)
-            : [];
+    $lastMtime = (int) ($meta['last_mtime'] ?? 0);
+    $maxMtime  = $lastMtime;
 
-        $lastMtime = (int)($meta['last_mtime'] ?? 0);
-        $maxMtime  = $lastMtime;
+    $processed = 0;
+    $inserted  = 0;
 
-        $batch = [];
-        $batchSize = 1000;
-        $processed = 0;
-        $inserted  = 0;
-        $start = microtime(true);
+    $batch = [];
+    $batchSize = 1000;
+    $batchNo = 0;
 
-        foreach (new DirectoryIterator($this->basePath) as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'txt') continue;
+    Log::channel('struk_index')->info('BUILD START', [
+        'year' => $this->year,
+        'last_mtime' => $lastMtime,
+        'path' => $this->basePath,
+    ]);
 
-            $processed++;
-            $mtime = $file->getMTime();
-            if ($mtime <= $lastMtime) continue;
-
-            $key = $file->getBasename('.txt');
-            if (!preg_match('/^\d{2}\.\d{6}$/', $key)) continue;
-
-            [$kassa, $nomor] = explode('.', $key);
-
-            $index[$key] = compact('kassa', 'nomor', 'mtime');
-
-            $batch[] = [
-                'tahun' => $this->year,
-                'key'   => $key,
-                'kassa' => $kassa,
-                'nomor' => $nomor,
-                'mtime' => $mtime,
-                'path'  => "{$this->basePath}/{$key}.txt",
-            ];
-
-            $inserted++;
-            $maxMtime = max($maxMtime, $mtime);
-
-            if (count($batch) >= $batchSize) {
-                $this->insertBatch($batch);
-                $batch = [];
-            }
-
-            if ($processed % 500 === 0) {
-                $this->writeStatus([
-                    'state' => 'running',
-                    'year' => $this->year,
-                    'processed' => $processed,
-                    'inserted' => $inserted,
-                    'elapsed_s' => round(microtime(true) - $start, 2),
-                ]);
-            }
+    foreach (new DirectoryIterator($this->basePath) as $file) {
+        if (!$file->isFile() || $file->getExtension() !== 'txt') {
+            continue;
         }
 
-        if ($batch) $this->insertBatch($batch);
+        $processed++;
 
-        file_put_contents($this->indexFile, json_encode($index));
-        file_put_contents($this->metaFile, json_encode([
-            'last_run' => time(),
-            'last_mtime' => $maxMtime,
-        ]));
+        // ✅ FIX WAJIB: key dibuat SEBELUM dipakai
+        $key = $file->getBasename('.txt');
+        if (!preg_match('/^\d{2}\.\d{6}$/', $key)) {
+            Log::channel('struk_index')->debug('SKIP INVALID FILENAME', [
+                'file' => $file->getFilename(),
+            ]);
+            continue;
+        }
 
-        $this->writeStatus([
-            'state' => 'done',
-            'year' => $this->year,
-            'processed' => $processed,
-            'inserted' => $inserted,
-            'elapsed_s' => round(microtime(true) - $start, 2),
-        ]);
+        $mtime = $file->getMTime();
 
-        Log::info("Index struk selesai", [
-            'year' => $this->year,
-            'processed' => $processed,
-            'inserted' => $inserted,
+        $exists = DB::table('struk_index')
+            ->where('tahun', $this->year)
+            ->where('key', $key)
+            ->exists();
+
+        // Skip file lama yang sudah ada
+        if ($exists && $mtime <= $lastMtime) {
+            continue;
+        }
+
+        [$kassa, $nomor] = explode('.', $key);
+
+        $batch[] = [
+            'tahun' => $this->year,
+            'key'   => $key,
+            'kassa' => $kassa,
+            'nomor' => $nomor,
+            'mtime' => $mtime,
+            'path'  => "{$this->basePath}/{$key}.txt",
+        ];
+
+        $inserted++;
+        $maxMtime = max($maxMtime, $mtime);
+
+        if (count($batch) >= $batchSize) {
+            $batchNo++;
+
+            $this->insertBatch($batch);
+            $batch = [];
+
+            $elapsed = round(microtime(true) - $start, 2);
+
+            Log::channel('struk_index')->info('BATCH INSERTED', [
+                'batch' => $batchNo,
+                'processed' => $processed,
+                'inserted' => $inserted,
+                'elapsed_s' => $elapsed,
+            ]);
+        }
+    }
+
+    if ($batch) {
+        $batchNo++;
+        $this->insertBatch($batch);
+
+        Log::channel('struk_index')->info('FINAL BATCH INSERTED', [
+            'batch' => $batchNo,
+            'inserted_total' => $inserted,
         ]);
     }
+
+    // 🔑 Meta ditulis SETELAH indexing sukses
+    file_put_contents($this->metaFile, json_encode([
+        'last_run'   => time(),
+        'last_mtime' => $maxMtime,
+    ]));
+
+    $elapsed = round(microtime(true) - $start, 2);
+
+    Log::channel('struk_index')->info('BUILD FINISHED', [
+        'year' => $this->year,
+        'processed' => $processed,
+        'inserted' => $inserted,
+        'elapsed_s' => $elapsed,
+        'new_last_mtime' => $maxMtime,
+    ]);
+}
+
+
+
 
     /* ==============================
      | SQLITE

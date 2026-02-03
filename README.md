@@ -1,59 +1,212 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# 📄 e-Struk – Sistem Indexing & Pencarian Struk
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+## 📌 Gambaran Umum
 
-## About Laravel
+**e-Struk** adalah sistem **indexing struk berbasis Laravel + SQLite** yang dirancang untuk:
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+* Mengindeks **file struk TXT** dalam jumlah besar
+* Mendukung **incremental indexing** untuk tahun berjalan
+* Mendukung **arsip tahunan** yang bisa di‑rebuild kapan saja
+* Menyediakan **pencarian cepat** berdasarkan nomor, tanggal, kassa, dan isi struk
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+Folder fisik struk dianggap sebagai **source of truth**. Database hanya berperan sebagai **index & cache terstruktur**.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+## 🧠 Konsep Arsitektur
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+### 1️⃣ Source of Truth
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+* File struk **TXT** di filesystem (`estruk`, `estruk2025`, dll)
+* File **tidak pernah dihapus otomatis**
 
-## Laravel Sponsors
+### 2️⃣ Database (SQLite)
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+* Tabel `struk_index`
+* Menyimpan metadata:
 
-### Premium Partners
+  * tahun
+  * key (kassa.nomor)
+  * mtime
+  * path file
+  * content_index (opsional, untuk search isi)
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+Database **boleh dihapus / dibangun ulang kapan saja**.
 
-## Contributing
+### 3️⃣ Mode Indexing
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+| Mode        | Tahun          | Cara                                     |
+| ----------- | -------------- | ---------------------------------------- |
+| Incremental | Tahun berjalan | Jalan otomatis tiap jam (cooldown 1 jam) |
+| Arsip       | Tahun lama     | Full build sekali / manual               |
 
-## Code of Conduct
+---
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## ⚙️ Teknologi
 
-## Security Vulnerabilities
+* PHP 8.x
+* Laravel 12
+* SQLite (index)
+* Filesystem lokal
+* Laravel Scheduler & Artisan Command
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+---
 
-## License
+## 📂 Struktur Direktori Penting
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+```
+app/
+ ├── Services/
+ │    └── StrukIndexService.php   # Core indexing logic
+ └── Console/Commands/
+      ├── StrukIndexCommand.php   # Entry point indexing
+      ├── StrukBuildContentIndex.php
+      ├── StrukFillKeyPrefix.php
+      └── SqliteMaintenance.php
+
+storage/
+ └── app/struk/
+      ├── 2026.index.json
+      ├── 2026.meta.json
+      └── 2026.status.json
+```
+
+---
+
+## ▶️ Cara Menjalankan Project
+
+### 1️⃣ Instalasi
+
+```bash
+git clone <repository-url>
+cd e-struk
+composer install
+cp .env.example .env
+php artisan key:generate
+```
+
+Pastikan database SQLite sudah dikonfigurasi di `.env`.
+
+---
+
+## 🚀 Indexing Struk
+
+### ▶ Tahun Berjalan (Incremental)
+
+```bash
+php artisan struk:index
+```
+
+Ciri:
+
+* Maksimal jalan **1x per jam**
+* Aman dipanggil scheduler
+* Hanya memproses file baru / berubah
+
+---
+
+### ▶ Tahun Arsip (Full Build)
+
+```bash
+php artisan struk:index 2024
+```
+
+Ciri:
+
+* Build ulang total
+* Biasanya hanya 1x atau saat recovery
+
+---
+
+## 🔍 Content Index (Search Isi Struk)
+
+Digunakan untuk search kata kunci di dalam struk.
+
+```bash
+php artisan struk:build-content-index
+```
+
+* Jalan bertahap (chunk)
+* Aman dihentikan & dilanjutkan
+
+---
+
+## 🧹 Cleanup Tahunan (DATABASE ONLY)
+
+Saat pergantian tahun, **data lama di database dihapus**, tetapi **file fisik tetap ada**.
+
+```bash
+php artisan struk:cleanup-db
+```
+
+Aturan:
+
+* Tahun ≤ (tahun sekarang − 2) → dihapus dari DB
+* Tahun lalu → dipertahankan
+
+File TXT tetap bisa di‑index ulang kapan saja.
+
+---
+
+## ⏱️ Scheduler Produksi (Rekomendasi)
+
+```php
+Schedule::command('struk:cleanup-db')
+    ->yearlyOn(1, 1, '00:05')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('struk:index')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('struk:build-content-index')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('sqlite:maintenance')
+    ->monthlyOn(1, '02:00')
+    ->withoutOverlapping()
+    ->runInBackground();
+```
+
+---
+
+## 📝 Logging
+
+Semua proses dicatat ke channel:
+
+```
+struk_index
+```
+
+Log mencakup:
+
+* Batch processing
+* Insert / update
+* Cleanup tahunan
+* Error & recovery
+
+---
+
+## 🛡️ Prinsip Keamanan Data
+
+* File fisik **tidak pernah dihapus otomatis**
+* Database bisa direbuild kapan saja
+* Scheduler aman dari double-run
+* Cocok untuk sistem jangka panjang
+
+---
+
+## 👨‍💻 Author
+
+Dikembangkan oleh **Aslam Abdika**
+Untuk kebutuhan internal & sistem arsip jangka panjang.
+
+---
+
+## 📄 Lisensi
+
+Internal / Private – disesuaikan dengan kebutuhan organisasi.

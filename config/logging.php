@@ -127,11 +127,12 @@ return [
             'path' => storage_path('logs/laravel.log'),
         ],
 
-        'struk' => [
-    'driver' => 'single',
-    'path' => storage_path('logs/struk-index.log'),
-    'level' => 'info',
-],
+        'struk_index' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/struk-index.log'),
+            'level' => 'info',
+            'days' => 7, //otomatis hapus 7 hari
+        ],
 
 
     ],

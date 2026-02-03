@@ -21,8 +21,11 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('struk_index', function (Blueprint $table) {
-            //
-        });
+        public function down(): void
+{
+    Schema::table('struk_index', function (Blueprint $table) {
+        $table->dropColumn('content_index');
+    });
+}
     }
 };
